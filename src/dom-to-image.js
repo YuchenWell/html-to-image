@@ -48,23 +48,45 @@
                 defaults to 1.0.
      * @param {String} options.imagePlaceholder - dataURL to use as a placeholder for failed images, default behaviour is to fail fast on images we can't fetch
      * @param {Boolean} options.cacheBust - set to true to cache bust by appending the time to the request url
+     * 
+     * @param {Boolean} options.disableEmbedFonts - 禁用嵌入字体
+     * @param {Boolean} options.timingLogging - 打印各步骤时间
+     * 
      * @return {Promise} - A promise that is fulfilled with a SVG image data URL
      * */
     function toSvg(node, options) {
         options = options || {};
         copyOptions(options);
+
+
+
+        options.timingLogging && console.time('toSvgDataURI ')
         return Promise.resolve(node)
             .then(function (node) {
-                return cloneNode(node, options.filter, true);
+
+                options.timingLogging && console.time('toSvgDataURI(cloneNode)')
+                const clonedNode = cloneNode(node, options.filter, true);
+                options.timingLogging && console.timeEnd('toSvgDataURI(cloneNode)')
+
+                return clonedNode
             })
-            .then(embedFonts)
+            .then(function (clonedNode) {
+                if (options.disableEmbedFonts) {
+                    return clonedNode
+                } else {
+                    return embedFonts(clonedNode)
+                }
+
+            })
             .then(inlineImages)
             .then(applyOptions)
             .then(function (clone) {
-                return makeSvgDataUri(clone,
+                const uri = makeSvgDataUri(clone,
                     options.width || util.width(node),
                     options.height || util.height(node)
                 );
+                options.timingLogging && console.timeEnd('toSvgDataURI ')
+                return uri
             });
 
         function applyOptions(clone) {
@@ -136,13 +158,13 @@
 
     function copyOptions(options) {
         // Copy options to impl options for use in impl
-        if(typeof(options.imagePlaceholder) === 'undefined') {
+        if (typeof (options.imagePlaceholder) === 'undefined') {
             domtoimage.impl.options.imagePlaceholder = defaultOptions.imagePlaceholder;
         } else {
             domtoimage.impl.options.imagePlaceholder = options.imagePlaceholder;
         }
 
-        if(typeof(options.cacheBust) === 'undefined') {
+        if (typeof (options.cacheBust) === 'undefined') {
             domtoimage.impl.options.cacheBust = defaultOptions.cacheBust;
         } else {
             domtoimage.impl.options.cacheBust = options.cacheBust;
@@ -154,8 +176,10 @@
             .then(util.makeImage)
             .then(util.delay(100))
             .then(function (image) {
+                options.timingLogging && console.time('drawCanvas')
                 var canvas = newCanvas(domNode);
                 canvas.getContext('2d').drawImage(image, 0, 0);
+                options.timingLogging && console.timeEnd('drawCanvas')
                 return canvas;
             });
 
@@ -175,6 +199,7 @@
     }
 
     function cloneNode(node, filter, root) {
+
         if (!root && filter && !filter(node)) return Promise.resolve();
 
         return Promise.resolve(node)
@@ -183,7 +208,7 @@
                 return cloneChildren(node, clone, filter);
             })
             .then(function (clone) {
-                return processClone(node, clone);
+                return processClone(node, clone)
             });
 
         function makeNodeCopy(node) {
@@ -310,11 +335,13 @@
     }
 
     function embedFonts(node) {
+        options.timingLogging && console.time('toSvgDataURI(embedFonts)')
         return fontFaces.resolveAll()
             .then(function (cssText) {
                 var styleNode = document.createElement('style');
                 node.appendChild(styleNode);
                 styleNode.appendChild(document.createTextNode(cssText));
+                options.timingLogging && console.timeEnd('toSvgDataURI(embedFonts)')
                 return node;
             });
     }
@@ -327,6 +354,7 @@
     }
 
     function makeSvgDataUri(node, width, height) {
+        options.timingLogging && console.time('toSvgDataURI(makeSvgDataUri)')
         return Promise.resolve(node)
             .then(function (node) {
                 node.setAttribute('xmlns', 'http://www.w3.org/1999/xhtml');
@@ -341,6 +369,7 @@
                     foreignObject + '</svg>';
             })
             .then(function (svg) {
+                options.timingLogging && console.timeEnd('toSvgDataURI(makeSvgDataUri)')
                 return 'data:image/svg+xml;charset=utf-8,' + svg;
             });
     }
@@ -417,9 +446,13 @@
         }
 
         function canvasToBlob(canvas) {
+            options.timingLogging && console.time('canvasToBlob')
             if (canvas.toBlob)
                 return new Promise(function (resolve) {
-                    canvas.toBlob(resolve);
+                    canvas.toBlob((blob) => {
+                        options.timingLogging && console.timeEnd('canvasToBlob')
+                        resolve(blob)
+                    });
                 });
 
             return toBlob(canvas);
@@ -450,9 +483,13 @@
         }
 
         function makeImage(uri) {
+            options.timingLogging && console.log('svg dataURI: ', uri)
+            options.timingLogging && console.time('makeImageElement')
             return new Promise(function (resolve, reject) {
                 var image = new Image();
                 image.onload = function () {
+
+                    options.timingLogging && console.timeEnd('makeImageElement')
                     resolve(image);
                 };
                 image.onerror = reject;
@@ -462,7 +499,7 @@
 
         function getAndEncode(url) {
             var TIMEOUT = 30000;
-            if(domtoimage.impl.options.cacheBust) {
+            if (domtoimage.impl.options.cacheBust) {
                 // Cache bypass so we dont have CORS issues with cached images
                 // Source: https://developer.mozilla.org/en/docs/Web/API/XMLHttpRequest/Using_XMLHttpRequest#Bypassing_the_cache
                 url += ((/\?/).test(url) ? "&" : "?") + (new Date()).getTime();
@@ -479,9 +516,9 @@
                 request.send();
 
                 var placeholder;
-                if(domtoimage.impl.options.imagePlaceholder) {
+                if (domtoimage.impl.options.imagePlaceholder) {
                     var split = domtoimage.impl.options.imagePlaceholder.split(/,/);
-                    if(split && split[1]) {
+                    if (split && split[1]) {
                         placeholder = split[1];
                     }
                 }
@@ -490,7 +527,7 @@
                     if (request.readyState !== 4) return;
 
                     if (request.status !== 200) {
-                        if(placeholder) {
+                        if (placeholder) {
                             resolve(placeholder);
                         } else {
                             fail('cannot fetch resource: ' + url + ', status: ' + request.status);
@@ -508,7 +545,7 @@
                 }
 
                 function timeout() {
-                    if(placeholder) {
+                    if (placeholder) {
                         resolve(placeholder);
                     } else {
                         fail('timeout of ' + TIMEOUT + 'ms occured while fetching resource: ' + url);
@@ -531,6 +568,7 @@
         }
 
         function delay(ms) {
+            console.log('delay 100ms')
             return function (arg) {
                 return new Promise(function (resolve) {
                     setTimeout(function () {
